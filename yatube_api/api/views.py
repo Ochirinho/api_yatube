@@ -1,76 +1,43 @@
-from rest_framework import viewsets, permissions, filters
-from django.shortcuts import get_object_or_404
-from rest_framework.exceptions import ValidationError
-from rest_framework.response import Response
+from rest_framework import viewsets
+from rest_framework import permissions
+from posts.models import Post, Group, Comment
+from .serializers import PostSerializer, GroupSerializer, CommentSerializer
 
-from posts.models import Post, Comment, Group, Follow
-from .serializers import PostSerializer, CommentSerializer
-from .serializers import GroupSerializer, FollowSerializer
-from .permissions import OwnerOrReadOnly
+
+class IsAuthorOrReadOnly(permissions.BasePermission):
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return obj.author == request.user
 
 
 class PostViewSet(viewsets.ModelViewSet):
+
     queryset = Post.objects.all()
     serializer_class = PostSerializer
-    permission_classes = [
-        permissions.IsAuthenticatedOrReadOnly,
-        OwnerOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated, IsAuthorOrReadOnly]
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
 
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
 
-        if 'limit' in request.query_params or 'offset' in request.query_params:
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
+class GroupViewSet(viewsets.ReadOnlyModelViewSet):
 
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+    queryset = Group.objects.all()
+    serializer_class = GroupSerializer
 
 
 class CommentViewSet(viewsets.ModelViewSet):
     serializer_class = CommentSerializer
-    permission_classes = [
-        permissions.IsAuthenticatedOrReadOnly,
-        OwnerOrReadOnly]
-    pagination_class = None
+    permission_classes = [permissions.IsAuthenticated, IsAuthorOrReadOnly]
 
     def get_queryset(self):
         post_id = self.kwargs.get('post_id')
         return Comment.objects.filter(post_id=post_id)
 
     def perform_create(self, serializer):
-        post = get_object_or_404(Post, pk=self.kwargs.get('post_id'))
-        serializer.save(post=post, author=self.request.user)
-
-
-class GroupViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Group.objects.all()
-    serializer_class = GroupSerializer
-    permission_classes = [permissions.AllowAny]
-    pagination_class = None
-
-
-class FollowViewSet(viewsets.ModelViewSet):
-    serializer_class = FollowSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filter_backends = [filters.SearchFilter]
-    search_fields = ['following__username']
-    pagination_class = None
-
-    def get_queryset(self):
-        return Follow.objects.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        following = serializer.validated_data['following']
-        user = self.request.user
-
-        if Follow.objects.filter(user=user, following=following).exists():
-            raise ValidationError('Вы уже подписаны на этого пользователя.')
-        elif user == following:
-            raise ValidationError('Невозможно подписаться на самого себя.')
-        serializer.save(user=self.request.user)
+        post_id = self.kwargs.get('post_id')
+        serializer.save(
+            post=Post.objects.get(pk=post_id),
+            author=self.request.user
+        )
